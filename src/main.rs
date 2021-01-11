@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate config;
 extern crate log;
+extern crate procfs;
 extern crate reqwest;
 extern crate simplelog;
 
@@ -10,11 +11,12 @@ use simplelog::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::process::Command;
+use std::thread;
 use std::time::{Duration, Instant};
 
 struct Message {
     command: Option<String>,
-    process: Option<u32>,
+    process: Option<i32>,
     exit_status: Option<i32>,
     time_elapsed: Option<Duration>,
 }
@@ -33,9 +35,16 @@ impl Message {
         let mut message = String::new();
 
         match &self.command {
-            Some(command) => message += &format!("\"{}\" finished", command),
-            None => message += "Command finished",
+            Some(command) => message += &format!("\"{}\"", command),
+            None => message += "Command",
         }
+
+        match &self.process {
+            Some(process) => message += &format!(" (PID {})", process),
+            None => {}
+        }
+
+        message += " finished";
 
         match &self.exit_status {
             Some(exit_status) => {
@@ -88,6 +97,10 @@ fn generate_settings_from_matches(matches: &clap::ArgMatches) -> config::Config 
 
     if let Some(command_arguments) = matches.values_of("command") {
         settings.set("command", command_arguments.collect::<Vec<&str>>());
+    }
+
+    if let Some(process) = matches.value_of("process") {
+        settings.set("process", process);
     }
 
     debug!("{}", &format!("Settings {:?}", settings));
@@ -167,6 +180,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         message.exit_status = result.code();
         message.time_elapsed = Some(command_time_elapsed);
+    } else if let Ok(processid) = settings.get_int("process") {
+        message.process = Some(processid as i32);
+        let process = procfs::process::Process::new(processid as i32)?;
+
+        if let Ok(cmdline) = process.cmdline() {
+            message.command = Some(cmdline[0].clone());
+        }
+
+        while process.is_alive() {
+            thread::sleep(Duration::from_secs(1));
+        }
     }
 
     if let Ok(apikey) = settings.get_str("apikey") {
