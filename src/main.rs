@@ -1,13 +1,20 @@
 extern crate clap;
+extern crate config;
+extern crate log;
 extern crate reqwest;
+extern crate simplelog;
 
 use clap::{App, AppSettings, Arg};
+use log::*;
+use simplelog::*;
 use std::collections::HashMap;
+use std::fs::File;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 struct Message {
     command: Option<String>,
+    process: Option<u32>,
     exit_status: Option<i32>,
     time_elapsed: Option<Duration>,
 }
@@ -16,6 +23,7 @@ impl Message {
     fn new() -> Message {
         return Message {
             command: None,
+            process: None,
             exit_status: None,
             time_elapsed: None,
         };
@@ -49,10 +57,10 @@ impl Message {
     }
 }
 
-fn send_notification(message: &str, api_key: &str) {
+fn send_notification(message: &str, apikey: &str) {
     let webhook_url = format!(
         "https://maker.ifttt.com/trigger/command_exited/with/key/{}",
-        api_key
+        apikey
     );
     let mut webhook_payload = HashMap::new();
     webhook_payload.insert("value1", message);
@@ -61,43 +69,111 @@ fn send_notification(message: &str, api_key: &str) {
     let _ = client.post(&webhook_url).json(&webhook_payload).send();
 }
 
-fn main() {
+fn generate_settings_from_matches(matches: &clap::ArgMatches) -> config::Config {
+    let mut settings = config::Config::default();
+    let config_file = matches.value_of("config").unwrap();
+    if std::path::Path::new(config_file).exists() {
+        settings
+            .merge(config::File::with_name(config_file))
+            .unwrap();
+    } else {
+        settings
+            .merge(config::File::with_name("hark").required(false))
+            .unwrap();
+    }
+
+    if let Some(apikey) = matches.value_of("apikey") {
+        settings.set("apikey", apikey);
+    }
+
+    if let Some(command_arguments) = matches.values_of("command") {
+        settings.set("command", command_arguments.collect::<Vec<&str>>());
+    }
+
+    debug!("{}", &format!("Settings {:?}", settings));
+    return settings;
+}
+
+fn setup_logging() {
+    let _ = CombinedLogger::init(vec![
+        TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed),
+        WriteLogger::new(
+            LevelFilter::Debug,
+            Config::default(),
+            File::create("hark.log").unwrap(),
+        ),
+    ])
+    .unwrap();
+    debug!("Logging initalized");
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(debug_assertions)]
+    setup_logging();
+
     let matches = App::new("Hark!")
         .setting(AppSettings::TrailingVarArg)
         .arg(
-            Arg::with_name("KEY")
-                .help("IFTTT API Key")
-                .required(true)
-                .index(1),
+            Arg::with_name("config")
+                .short("c")
+                .long("config")
+                .value_name("FILE")
+                .help("Sets a custom config file")
+                .default_value("/etc/hark.toml")
+                .takes_value(true),
         )
         .arg(
-            Arg::with_name("CMD")
+            Arg::with_name("apikey")
+                .short("k")
+                .long("key")
+                .value_name("APIKEY")
+                .help("IFTTT API Key")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("process")
+                .short("p")
+                .long("process")
+                .value_name("PID")
+                .help("PID of the process to monitor")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("command")
+                .value_name("CMD")
                 .help("Command and arguments to be run")
-                .required(true)
                 .multiple(true)
-                .index(2),
+                .index(1),
         )
         .get_matches();
 
-    let api_key = matches.value_of("KEY").unwrap();
-    let command_args = matches.values_of("CMD").unwrap().collect::<Vec<_>>();
+    let settings = generate_settings_from_matches(&matches);
 
     let mut message = Message::new();
-    message.command = Some(command_args[0].to_string());
+    if let Ok(command_args) = settings.get_array("command") {
+        let base_cmd = command_args[0].clone().into_str()?;
+        message.command = Some(base_cmd.clone());
 
-    let mut command = Command::new(command_args[0]);
-    for arg in command_args.iter().skip(1) {
-        command.arg(arg);
+        let mut command = Command::new(base_cmd);
+        for arg in command_args.iter().skip(1) {
+            command.arg(arg.clone().into_str()?);
+        }
+
+        let command_start = Instant::now();
+        let mut child = command.spawn().expect("Command failed to start");
+
+        let result = child.wait()?;
+        let command_time_elapsed = command_start.elapsed();
+
+        message.exit_status = result.code();
+        message.time_elapsed = Some(command_time_elapsed);
     }
 
-    let command_start = Instant::now();
-    let mut child = command.spawn().expect("Command failed to start");
+    if let Ok(apikey) = settings.get_str("apikey") {
+        send_notification(&message.generate(), &apikey);
+    } else {
+        error!("Unable to send notification: no APIKEY given!");
+    }
 
-    let result = child.wait().unwrap();
-    let command_time_elapsed = command_start.elapsed();
-
-    message.exit_status = result.code();
-    message.time_elapsed = Some(command_time_elapsed);
-
-    send_notification(&message.generate(), api_key);
+    return Ok(());
 }
