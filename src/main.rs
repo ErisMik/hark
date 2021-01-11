@@ -9,10 +9,12 @@ use clap::{App, AppSettings, Arg};
 use log::*;
 use simplelog::*;
 use std::collections::HashMap;
-use std::fs::File;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[cfg(debug_assertions)]
+use std::fs::File;
 
 struct Message {
     command: Option<String>,
@@ -92,15 +94,17 @@ fn generate_settings_from_matches(matches: &clap::ArgMatches) -> config::Config 
     }
 
     if let Some(apikey) = matches.value_of("apikey") {
-        settings.set("apikey", apikey);
+        settings.set("apikey", apikey).unwrap();
     }
 
     if let Some(command_arguments) = matches.values_of("command") {
-        settings.set("command", command_arguments.collect::<Vec<&str>>());
+        settings
+            .set("command", command_arguments.collect::<Vec<&str>>())
+            .unwrap();
     }
 
     if let Some(process) = matches.value_of("process") {
-        settings.set("process", process);
+        settings.set("process", process).unwrap();
     }
 
     debug!("{}", &format!("Settings {:?}", settings));
@@ -110,6 +114,7 @@ fn generate_settings_from_matches(matches: &clap::ArgMatches) -> config::Config 
 fn setup_logging() {
     let _ = CombinedLogger::init(vec![
         TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed),
+        #[cfg(debug_assertions)]
         WriteLogger::new(
             LevelFilter::Debug,
             Config::default(),
@@ -121,7 +126,6 @@ fn setup_logging() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(debug_assertions)]
     setup_logging();
 
     let matches = App::new("Hark!")
