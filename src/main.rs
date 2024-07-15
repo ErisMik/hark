@@ -5,10 +5,9 @@ extern crate procfs;
 extern crate reqwest;
 extern crate simplelog;
 
-use clap::{App, AppSettings, Arg};
+use clap::{arg, command};
 use log::*;
 use simplelog::*;
-use std::collections::HashMap;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -60,7 +59,7 @@ impl Message {
         }
 
         match &self.time_elapsed {
-            Some(time_elapsed) => message += &format!(" after {:?}", time_elapsed),
+            Some(time_elapsed) => message += &format!(" after \"{:?}\"", time_elapsed),
             None => {}
         }
 
@@ -68,52 +67,60 @@ impl Message {
     }
 }
 
-fn send_notification(message: &str, apikey: &str) {
-    let webhook_url = format!(
-        "https://maker.ifttt.com/trigger/command_exited/with/key/{}",
-        apikey
-    );
-    let mut webhook_payload = HashMap::new();
-    webhook_payload.insert("value1", message);
+fn send_notification<S: Into<String>>(message: S, topic: &str) {
+    let publish_url = format!("https://ntfy.sh/{}", topic);
 
     let client = reqwest::blocking::Client::new();
-    let _ = client.post(&webhook_url).json(&webhook_payload).send();
+    let _ = client.post(&publish_url).body(message.into()).send();
 }
 
 fn generate_settings_from_matches(matches: &clap::ArgMatches) -> config::Config {
-    let mut settings = config::Config::default();
-    let config_file = matches.value_of("config").unwrap();
+    let mut settings_builder = config::Config::builder();
+
+    let config_file = matches.get_one::<String>("config").unwrap();
     if std::path::Path::new(config_file).exists() {
-        settings
-            .merge(config::File::with_name(config_file))
-            .unwrap();
+        settings_builder = settings_builder.add_source(config::File::with_name(config_file));
     } else {
-        settings
-            .merge(config::File::with_name("hark").required(false))
+        settings_builder =
+            settings_builder.add_source(config::File::with_name("hark").required(false));
+    }
+
+    if let Some(topic) = matches.get_one::<String>("topic") {
+        settings_builder = settings_builder
+            .set_override("topic", topic.clone())
             .unwrap();
     }
 
-    if let Some(apikey) = matches.value_of("apikey") {
-        settings.set("apikey", apikey).unwrap();
-    }
-
-    if let Some(command_arguments) = matches.values_of("command") {
-        settings
-            .set("command", command_arguments.collect::<Vec<&str>>())
+    if let Some(command_arguments) = matches.get_many::<String>("CMD") {
+        settings_builder = settings_builder
+            .set_override(
+                "cmd",
+                command_arguments
+                    .map(|s| s.to_owned())
+                    .collect::<Vec<String>>(),
+            )
             .unwrap();
     }
 
-    if let Some(process) = matches.value_of("process") {
-        settings.set("process", process).unwrap();
+    if let Some(process) = matches.get_one::<String>("process") {
+        settings_builder = settings_builder
+            .set_override("process", process.clone())
+            .unwrap();
     }
 
+    let settings = settings_builder.build().unwrap();
     debug!("{}", &format!("Settings {:?}", settings));
     return settings;
 }
 
 fn setup_logging() {
     let _ = CombinedLogger::init(vec![
-        TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed),
+        TermLogger::new(
+            LevelFilter::Warn,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
         #[cfg(debug_assertions)]
         WriteLogger::new(
             LevelFilter::Debug,
@@ -128,52 +135,28 @@ fn setup_logging() {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_logging();
 
-    let matches = App::new("Hark!")
-        .setting(AppSettings::TrailingVarArg)
+    let matches = command!()
+        .arg(arg!(-v --verbose "Print verbose output"))
+        .arg(arg!(-t --topic <TOPIC> "ntfy.sh topic to publish notification to"))
         .arg(
-            Arg::with_name("config")
-                .short("c")
-                .long("config")
-                .value_name("FILE")
-                .help("Sets a custom config file")
-                .default_value("/etc/hark.toml")
-                .takes_value(true),
+            arg!(-c --config <FILE> "Sets a custom config file path")
+                .default_value("/etc/hark.toml"),
         )
-        .arg(
-            Arg::with_name("apikey")
-                .short("k")
-                .long("key")
-                .value_name("APIKEY")
-                .help("IFTTT API Key")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("process")
-                .short("p")
-                .long("process")
-                .value_name("PID")
-                .help("PID of the process to monitor")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("command")
-                .value_name("CMD")
-                .help("Command and arguments to be run")
-                .multiple(true)
-                .index(1),
-        )
+        .arg(arg!(-s --save "Save command line settings to config file")) // todo
+        .arg(arg!(-p --process <PID> "PID of the process to monitor"))
+        .arg(arg!(<CMD> ... "Command and arguments to be run").trailing_var_arg(true))
         .get_matches();
 
     let settings = generate_settings_from_matches(&matches);
 
     let mut message = Message::new();
-    if let Ok(command_args) = settings.get_array("command") {
-        let base_cmd = command_args[0].clone().into_str()?;
+    if let Ok(command_args) = settings.get_array("cmd") {
+        let base_cmd = command_args[0].clone().into_string()?;
         message.command = Some(base_cmd.clone());
 
         let mut command = Command::new(base_cmd);
         for arg in command_args.iter().skip(1) {
-            command.arg(arg.clone().into_str()?);
+            command.arg(arg.clone().into_string()?);
         }
 
         let command_start = Instant::now();
@@ -197,10 +180,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if let Ok(apikey) = settings.get_str("apikey") {
-        send_notification(&message.generate(), &apikey);
+    if let Ok(topic) = settings.get_string("topic") {
+        send_notification(message.generate(), &topic);
     } else {
-        error!("Unable to send notification: no APIKEY given!");
+        error!("Unable to send notification: no TOPIC given!");
     }
 
     return Ok(());

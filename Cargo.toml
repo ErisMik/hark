@@ -1,13 +1,13 @@
 [package]
 name = "hark"
-version = "0.1.1"
+version = "1.0.0"
 authors = ["Eric Mikulin <ericm99@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-clap = "2.33"
-config = {"version"="0.9", "features"=["json"]}
+clap = { version = "4.5", features = ["cargo"] }
+config = {"version"="0.14", "features"=["json"]}
 log = "0.4"
-reqwest = {"version"="0.11", "features"=["blocking", "json"]}
-simplelog = "0.9"
-procfs = "0.9"
+procfs = "0.16"
+reqwest = {"version"="0.12", "features"=["blocking"]}
+simplelog = "0.12"

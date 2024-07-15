@@ -5,7 +5,7 @@
 
 <table>
     <tr><td><b>100% Rust</b></td></tr>
-    <tr><td><b>Powered by <a href="https://ifttt.com/home">IFTTT</a> for recieving notifications on the go</b></td></tr>
+    <tr><td><b>Powered by <a href="https://ntfy.sh">ntfy.sh</a> for recieving notifications on the go</b></td></tr>
     <tr><td><b>Support for most platforms</b></td></tr>
     <tr><td><b>Automatiaclly times commands</b></td></tr>
     <tr><td><b>Can monitor already started processes</b></td></tr>
@@ -17,29 +17,26 @@
 ## Usage
 
 ```bash
-Hark!
+Usage: hark [OPTIONS] <CMD>...
 
-USAGE:
-    hark [OPTIONS] [CMD]...
+Arguments:
+  <CMD>...  Command and arguments to be run
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
-
-OPTIONS:
-    -k, --key <APIKEY>     IFTTT API Key
-    -c, --config <FILE>    Sets a custom config file [default: /etc/hark.toml]
-    -p, --process <PID>    PID of the process to monitor
-
-ARGS:
-    <CMD>...    Command and arguments to be run
+Options:
+  -v, --verbose        Print verbose output
+  -t, --topic <TOPIC>  ntfy.sh topic to publish notification to
+  -c, --config <FILE>  Sets a custom config file path [default: /etc/hark.toml]
+  -s, --save           Save command line settings to config file
+  -p, --process <PID>  PID of the process to monitor
+  -h, --help           Print help
+  -V, --version        Print version
 ```
 
-## IFTTT
-Before being able to use `hark`, you'll need to setup the IFTTT applet. I've included a screenshot of mine here:
-![Use the Webhook and Notification services](examples/IFTTT_Applet.png)
-The input should be the `Webhook` service. `hark` specifically uses the `value1` field, so you'll need to include that in your output.
-Your output can be whatever you'd like to get your notifications on. I've used the `App Notifications`, but you could use `SMS` or `email`.
+## ntfy.sh
+
+Before being able to use `hark`, you'll need to set yourself up with [ntf.sh](ntfy.sh).
+Download the app, and then create a topic to use here.
+Pass it in using `-t` or [save it to a config file](#config).
 
 ## Examples
 
@@ -73,12 +70,12 @@ Command finished (January 8, 20201 at 9:30pm)
 
 ## Config
 
-You can use the configuration file to store your API key, so you don't need to input it everytime you run the command.
+You can use the configuration file to store your `ntfy.sh topic`, so you don't need to input it everytime you run the command.
 Configuration files can be given in any of the following formats: `JSON, YAML, TOML, HJSON`.
 
 An example `.toml` file would look like this:
 ```toml
-apikey = "youriftttapikeyhere"
+topic = "my-topic-here"
 ```
 
 By default `hark` will look for a configuration file at `/etc/hark.toml`.
